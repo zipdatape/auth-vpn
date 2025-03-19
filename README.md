@@ -106,5 +106,4 @@ services:
 
 ## Notes
 - Ensure your `.env` file is properly configured before starting the service.
-- The image is pulled from Docker Hub: `de0xys/radius_azure:latest`.
 - Modify the `DEBUG` variable for detailed logging during troubleshooting.
