@@ -1,0 +1,4 @@
+paramiko==3.4.0
+six==1.16.0
+python-dotenv==0.19.2
+cryptography==41.0.7
