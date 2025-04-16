@@ -1,5 +1,7 @@
 import { fetchAzureUsers } from "./azure"
 import { query, transaction } from "./db"
+import { terminateVPNSessionsForUser } from "./fortigateVPN"
+import { logAction } from "./auth"
 
 async function syncUsers() {
   try {
@@ -35,6 +37,26 @@ async function syncUsers() {
     console.log(`- Usuarios eliminados: ${removedUsers.length}`)
     console.log(`- Total de usuarios en Azure AD: ${azureUsers.length}`)
     console.log(`- ¿Hay cambios? ${hasChanges ? "Sí" : "No"}`)
+
+    // Cuando se detectan usuarios eliminados, terminar sus sesiones VPN
+    if (removedUsers.length > 0) {
+      console.log(`Detectados ${removedUsers.length} usuarios eliminados. Terminando sus sesiones VPN...`)
+
+      for (const user of removedUsers) {
+        try {
+          await terminateVPNSessionsForUser(user.userPrincipalName)
+
+          // Registrar la acción en los logs de auditoría
+          await logAction(
+            1, // ID del sistema para acciones automáticas
+            "auto_terminate_vpn",
+            `Sesión VPN terminada automáticamente para el usuario eliminado ${user.userPrincipalName}`,
+          )
+        } catch (error) {
+          console.error(`Error al terminar sesiones VPN para ${user.userPrincipalName}:`, error)
+        }
+      }
+    }
 
     await transaction(async (connection) => {
       // Limpiar la tabla users_azure
@@ -90,18 +112,11 @@ async function syncUsers() {
 }
 
 export function startScheduledSync() {
-  console.log("Sincronización programada iniciada. Se ejecutará cada 5 minutos.")
+  console.log("Sincronización programada iniciada. Se ejecutará cada 3 horas.")
 
   // Ejecutar inmediatamente la primera sincronización
   syncUsers()
 
-//   // Programar sincronizaciones periódicas cada 5 minutos
-//   setInterval(syncUsers, 5 * 60 * 1000)
-// }
-
-
-
-  // programar sincronizaciones periódicas cada 3 hours
+  // Programar sincronizaciones periódicas cada 3 horas
   setInterval(syncUsers, 3 * 60 * 60 * 1000)
 }
-
