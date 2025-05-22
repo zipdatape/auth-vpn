@@ -1,27 +1,26 @@
-version: '3.8'
 services:
   app_azure:
     build:
       context: .
       dockerfile: Dockerfile
-    image: auth-vpn
-    container_name: app_azure
+    image: gui_radius
+    container_name: gui_radius
     ports:
-      - "3000:3000"
+      - "3001:3001"
     volumes:
       - ./server.key:/app/certs/server.key:ro
       - ./server.crt:/app/certs/server.crt:ro
     environment:
       - NODE_ENV=production
-      - PORT=3000
+      - PORT=3001
       - SSL_KEY_PATH=/app/certs/server.key
       - SSL_CERT_PATH=/app/certs/server.crt
-      - DB_HOST=radius-mysql
+
     env_file:
       - .env.local
     restart: unless-stopped
     networks:
-      - app-network
+      - radius_gui_network
     user: root
     logging:
       driver: "json-file"
@@ -29,3 +28,6 @@ services:
         max-size: "10m"
         max-file: "7"
         compress: "true"
+networks:
+  radius_gui_network:
+    external: true
