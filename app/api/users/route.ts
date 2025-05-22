@@ -18,7 +18,7 @@ export async function GET(request: Request) {
     const page = Number.parseInt(url.searchParams.get("page") || "1")
     const limit = Number.parseInt(url.searchParams.get("limit") || "100")
     const search = url.searchParams.get("search") || ""
-    const domainFilter = "@yourdomain.com" // Filtro de dominio fijo
+    const domainFilter = "@globalhitss.com" // Filtro de dominio fijo
 
     // Validar parámetros
     const validPage = page > 0 ? page : 1
