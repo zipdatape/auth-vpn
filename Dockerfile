@@ -14,7 +14,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install Node.js dependencies
-RUN npm ci
+RUN npm install
 
 # Copy requirements.txt
 COPY requirements.txt ./
