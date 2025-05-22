@@ -48,7 +48,7 @@ export function DashboardClient() {
   const { toast } = useToast()
 
   // Dominio fijo para filtrar
-  const domainFilter = "@yourdomain.com"
+  const domainFilter = "@globalhitss.com"
 
   // Debounce search term
   useEffect(() => {
