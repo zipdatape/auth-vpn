@@ -5,6 +5,9 @@ import { getSession } from "@/lib/auth"
 export const dynamic = "force-dynamic"
 export const revalidate = 0
 
+// Dominios permitidos
+const ALLOWED_DOMAINS = ["@1.com", "@2.com"]
+
 export async function GET(request: Request) {
   try {
     // Check authentication
@@ -18,7 +21,6 @@ export async function GET(request: Request) {
     const page = Number.parseInt(url.searchParams.get("page") || "1")
     const limit = Number.parseInt(url.searchParams.get("limit") || "100")
     const search = url.searchParams.get("search") || ""
-    const domainFilter = "@globalhitss.com" // Filtro de dominio fijo
 
     // Validar parámetros
     const validPage = page > 0 ? page : 1
@@ -26,31 +28,37 @@ export async function GET(request: Request) {
     const offset = (validPage - 1) * validLimit
 
     console.log(`🔄 API: Fetching users with pagination (page ${validPage}, limit ${validLimit})...`)
+    console.log(`🔍 Dominios permitidos: ${ALLOWED_DOMAINS.join(", ")}`)
 
-    // Construir la consulta base con filtro de dominio
+    // Construir la consulta base con filtro de múltiples dominios
     let sqlQuery = `
       SELECT DISTINCT
-        ua.id, 
-        ua.displayName, 
+        ua.id,
+        ua.displayName,
         ua.userPrincipalName,
         GROUP_CONCAT(DISTINCT ura.radius_server_id) as vpnServers
-      FROM 
+      FROM
         users_azure ua
-      LEFT JOIN 
+      LEFT JOIN
         user_radius_access ura ON ua.userPrincipalName = ura.user_principal_name
-      WHERE 
-        ua.userPrincipalName LIKE ?
+      WHERE (
     `
 
-    // Parámetros base con el filtro de dominio
+    // Añadir condiciones para cada dominio
+    const domainConditions = ALLOWED_DOMAINS.map(() => "ua.userPrincipalName LIKE ?").join(" OR ")
+    sqlQuery += domainConditions + ")"
+
+    // Parámetros base con los filtros de dominio
     const queryParams = []
-    queryParams.push(`%${domainFilter}`)
+    ALLOWED_DOMAINS.forEach((domain) => {
+      queryParams.push(`%${domain}`)
+    })
 
     // Añadir condición de búsqueda si se proporciona
     if (search) {
       sqlQuery += `
         AND (
-          ua.displayName LIKE ? OR 
+          ua.displayName LIKE ? OR
           ua.userPrincipalName LIKE ?
         )
       `
@@ -59,9 +67,9 @@ export async function GET(request: Request) {
 
     // Añadir agrupación y ordenación
     sqlQuery += `
-      GROUP BY 
+      GROUP BY
         ua.id, ua.displayName, ua.userPrincipalName
-      ORDER BY 
+      ORDER BY
         ua.displayName ASC
     `
 
@@ -78,13 +86,18 @@ export async function GET(request: Request) {
 
     // Obtener el total de usuarios para la paginación
     let countQuery = `
-      SELECT COUNT(DISTINCT ua.id) as total 
-      FROM users_azure ua 
-      WHERE ua.userPrincipalName LIKE ?
+      SELECT COUNT(DISTINCT ua.id) as total
+      FROM users_azure ua
+      WHERE (
     `
 
+    // Añadir condiciones para cada dominio en el conteo
+    countQuery += domainConditions + ")"
+
     const countParams = []
-    countParams.push(`%${domainFilter}`)
+    ALLOWED_DOMAINS.forEach((domain) => {
+      countParams.push(`%${domain}`)
+    })
 
     if (search) {
       countQuery += ` AND (ua.displayName LIKE ? OR ua.userPrincipalName LIKE ?)`
@@ -95,6 +108,12 @@ export async function GET(request: Request) {
     const total = totalResult[0].total
 
     console.log(`📊 API: Number of users fetched: ${users.length} (total: ${total})`)
+
+    // Log por dominio
+    ALLOWED_DOMAINS.forEach((domain) => {
+      const domainCount = users.filter((user) => user.userPrincipalName.endsWith(domain)).length
+      console.log(`📊 API: Users with domain ${domain}: ${domainCount}`)
+    })
 
     const formattedUsers = users.map((user) => ({
       ...user,
@@ -111,6 +130,7 @@ export async function GET(request: Request) {
           limit: validLimit,
           totalPages: Math.ceil(total / validLimit),
         },
+        allowedDomains: ALLOWED_DOMAINS,
       },
       { headers: { "Cache-Control": "no-store" } },
     )
@@ -119,4 +139,3 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Failed to fetch users" }, { status: 500 })
   }
 }
-
