@@ -47,8 +47,8 @@ export function DashboardClient() {
   const [isUsersWithAccessDialogOpen, setIsUsersWithAccessDialogOpen] = useState(false)
   const { toast } = useToast()
 
-  // Dominio fijo para filtrar
-  const domainFilter = "@globalhitss.com"
+  // Dominios permitidos - se obtendrán de la API
+  const [allowedDomains, setAllowedDomains] = useState<string[]>(["@1.com", "@2.com"])
 
   // Debounce search term
   useEffect(() => {
@@ -64,7 +64,7 @@ export function DashboardClient() {
     error: usersError,
     mutate: mutateUsers,
     isLoading,
-  } = useSWR<{ users: User[]; pagination: PaginationInfo }>(
+  } = useSWR<{ users: User[]; pagination: PaginationInfo; allowedDomains?: string[] }>(
     `/api/users?page=${page}&limit=${limit}${debouncedSearch ? `&search=${encodeURIComponent(debouncedSearch)}` : ""}`,
     fetcher,
     {
@@ -85,6 +85,13 @@ export function DashboardClient() {
   const radiusServers = radiusServersData?.servers || []
   const isAdmin = sessionData?.user?.role === "admin"
   const usersWithAccessCount = usersWithAccessData?.total || 0
+
+  // Actualizar dominios permitidos cuando se reciben de la API
+  useEffect(() => {
+    if (usersData?.allowedDomains) {
+      setAllowedDomains(usersData.allowedDomains)
+    }
+  }, [usersData])
 
   useEffect(() => {
     if (usersData) {
@@ -167,6 +174,9 @@ export function DashboardClient() {
     mutateUsers()
   }
 
+  // Formatear dominios para mostrar en la UI
+  const domainsText = allowedDomains.join(", ")
+
   if (usersError) {
     return <div>Error loading data</div>
   }
@@ -195,12 +205,25 @@ export function DashboardClient() {
             <CardHeader>
               <CardTitle className="flex items-center">
                 <Users className="mr-2 h-4 w-4" />
-                Total Users ({domainFilter})
+                Total Users
               </CardTitle>
-              <CardDescription>Total users with domain {domainFilter}</CardDescription>
+              <CardDescription>Total users with domains: {domainsText}</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="text-4xl font-bold">{pagination?.total || users.length}</div>
+              {/* Mostrar desglose por dominio si hay datos */}
+              {users.length > 0 && (
+                <div className="mt-2 text-sm text-muted-foreground">
+                  {allowedDomains.map((domain) => {
+                    const count = users.filter((user) => user.userPrincipalName.endsWith(domain)).length
+                    return (
+                      <div key={domain}>
+                        {domain}: {count} users
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
             </CardContent>
           </Card>
           <Card
@@ -227,7 +250,7 @@ export function DashboardClient() {
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-500" />
               <Input
                 type="search"
-                placeholder={`Search users with domain ${domainFilter}...`}
+                placeholder={`Search users with domains: ${domainsText}...`}
                 className="pl-8"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
@@ -323,7 +346,7 @@ export function DashboardClient() {
           <Card className="mt-6">
             <CardHeader>
               <CardTitle>User List</CardTitle>
-              <CardDescription>List of users with domain {domainFilter}</CardDescription>
+              <CardDescription>List of users with domains: {domainsText}</CardDescription>
             </CardHeader>
             <CardContent>
               <Table>
@@ -386,4 +409,3 @@ export function DashboardClient() {
     </>
   )
 }
-
