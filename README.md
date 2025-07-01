@@ -17,6 +17,7 @@ Sistema integral de gestión de VPN que integra Azure Active Directory con Forti
 - 📝 **Auditoría y Logs**: Registro completo de actividades y cambios
 - 🎯 **Gestión de Portales VPN**: Configuración de múltiples portales FortiGate
 - 🔒 **Autenticación Basada en Roles**: Sistema de permisos administrativos
+- 🐍 **Scripts Python Utilitarios**: Scripts especializados para gestión de sesiones VPN y grupos
 
 ## 🏗️ Arquitectura del Sistema
 
@@ -116,7 +117,10 @@ azure-vpn/
 ├── 📁 scripts/               # Scripts de utilidades
 │   ├── 📄 init-db.js         # Inicialización BD
 │   ├── 📄 init-db.sql        # 🆕 Esquema actualizado con campos de bloqueo
-│   └── 📄 create-admin.js    # Crear usuario admin
+│   ├── 📄 create-admin.js    # Crear usuario admin
+│   ├── 📄 terminate_vpn_session.py # 🆕 Gestión de sesiones VPN
+│   ├── 📄 revoke_access.py   # 🆕 Revocación de acceso de grupos
+│   └── 📄 fortigate_ssh.py   # 🆕 Consulta de grupos VPN
 ├── 📄 .env.local             # Variables de entorno
 ├── 📄 docker-compose.yml     # Configuración Docker
 ├── 📄 Dockerfile            # Imagen Docker
@@ -306,6 +310,232 @@ docker-compose logs -f app_azure
 ### Portales VPN
 - `GET /api/vpn-portals` - Listar portales VPN
 - `GET /api/vpn-portals/{id}` - Obtener portal específico
+
+## 🐍 Scripts de Python Utilitarios
+
+El sistema incluye varios scripts de Python que proporcionan funcionalidad crítica para la gestión de VPN y usuarios. Estos scripts interactúan directamente con el FortiGate mediante SSH para realizar operaciones administrativas.
+
+### 📁 `scripts/terminate_vpn_session.py`
+
+**Propósito:** Gestión de sesiones VPN activas en FortiGate
+
+**Funcionalidades:**
+- **Listar sesiones VPN activas**: Obtiene una lista de todas las sesiones SSL-VPN conectadas
+- **Terminar sesiones por usuario**: Termina todas las sesiones VPN de un usuario específico
+- **Terminar sesión por índice**: Termina una sesión específica usando su índice
+
+**Comandos disponibles:**
+```bash
+# Listar todas las sesiones VPN activas
+python scripts/terminate_vpn_session.py list
+
+# Terminar todas las sesiones de un usuario
+python scripts/terminate_vpn_session.py terminate <usuario@dominio.com>
+
+# Terminar una sesión específica por índice
+python scripts/terminate_vpn_session.py terminate-index <índice>
+
+# Mostrar información de debug
+python scripts/terminate_vpn_session.py debug
+
+# Mostrar ayuda
+python scripts/terminate_vpn_session.py help
+```
+
+**Variables de entorno requeridas:**
+```bash
+FORTIGATE_IP=192.168.1.100
+FORTIGATE_SSH_PORT=22
+FORTIGATE_SSH_USERNAME=admin
+FORTIGATE_SSH_PASSWORD=tu_password
+```
+
+**Salida JSON:**
+```json
+{
+  "success": true,
+  "message": "Terminated 2 VPN sessions for user 'juan.perez@empresa.com'",
+  "terminated_sessions": [
+    {"index": "5", "username": "juan.perez"},
+    {"index": "7", "username": "juan.perez"}
+  ]
+}
+```
+
+**Casos de uso:**
+- Se ejecuta automáticamente cuando se bloquea un usuario
+- Monitoreo manual de sesiones activas
+- Terminación forzada de sesiones problemáticas
+
+### 📁 `scripts/revoke_access.py`
+
+**Propósito:** Revocación de acceso de usuarios de grupos VPN en FortiGate
+
+**Funcionalidad:**
+- Conecta al FortiGate vía SSH
+- Modifica la configuración de grupos de usuarios
+- Remueve usuarios específicos de grupos VPN
+- Mantiene la integridad de la configuración del grupo
+
+**Uso:**
+```bash
+python scripts/revoke_access.py <nombre_grupo> <usuario_a_remover>
+```
+
+**Ejemplo:**
+```bash
+# Remover usuario del grupo VPN_USERS
+python scripts/revoke_access.py "VPN_USERS" "juan.perez"
+```
+
+**Variables de entorno requeridas:**
+```bash
+FORTIGATE_IP=192.168.1.100
+FORTIGATE_SSH_PORT=22
+FORTIGATE_SSH_USERNAME=admin
+FORTIGATE_SSH_PASSWORD=tu_password
+```
+
+**Salida JSON:**
+```json
+{
+  "success": true,
+  "message": "User 'juan.perez' has been removed from the group 'VPN_USERS'."
+}
+```
+
+**Proceso interno:**
+1. Conecta al FortiGate via SSH
+2. Entra en modo de configuración de grupos
+3. Obtiene la lista actual de miembros
+4. Verifica que el usuario existe en el grupo
+5. Crea nueva lista sin el usuario especificado
+6. Actualiza la configuración del grupo
+7. Guarda los cambios
+
+### 📁 `scripts/fortigate_ssh.py`
+
+**Propósito:** Consulta de miembros de grupos VPN
+
+**Funcionalidad:**
+- Obtiene la lista de miembros de un grupo específico en FortiGate
+- Utilizado para verificar configuraciones actuales
+- Proporciona información en formato JSON para integración con la aplicación
+
+**Uso:**
+```bash
+python scripts/fortigate_ssh.py <nombre_grupo>
+```
+
+**Ejemplo:**
+```bash
+python scripts/fortigate_ssh.py "VPN_USERS"
+```
+
+**Variables de entorno requeridas:**
+```bash
+FORTIGATE_IP=192.168.1.100
+FORTIGATE_SSH_PORT=22
+FORTIGATE_SSH_USERNAME=admin
+FORTIGATE_SSH_PASSWORD=tu_password
+```
+
+**Salida JSON:**
+```json
+{
+  "group": "VPN_USERS",
+  "members": [
+    "juan.perez",
+    "maria.garcia",
+    "carlos.lopez"
+  ]
+}
+```
+
+### 🔧 Integración con la Aplicación
+
+Los scripts se integran con la aplicación Next.js de las siguientes maneras:
+
+**1. Bloqueo de usuarios:**
+```javascript
+// En app/api/system-users/block/route.ts
+const result = await new Promise((resolve, reject) => {
+  const pythonProcess = spawn('python3', [
+    path.join(process.cwd(), 'scripts/terminate_vpn_session.py'),
+    'terminate',
+    userPrincipalName
+  ]);
+  // ... manejo de la respuesta
+});
+```
+
+**2. Revocación de acceso:**
+```javascript
+// En app/api/revoke-access/route.ts
+const revokeResult = await new Promise((resolve, reject) => {
+  const pythonProcess = spawn('python3', [
+    path.join(process.cwd(), 'scripts/revoke_access.py'),
+    groupName,
+    username
+  ]);
+  // ... manejo de la respuesta
+});
+```
+
+### 🛠️ Configuración y Requisitos
+
+**Dependencias de Python:**
+```bash
+pip install paramiko python-dotenv
+```
+
+**O usando el archivo requirements.txt:**
+```bash
+pip install -r requirements.txt
+```
+
+**Permisos requeridos en FortiGate:**
+- Usuario SSH con permisos administrativos
+- Acceso a configuración de grupos de usuarios
+- Permisos para ejecutar comandos de gestión de sesiones VPN
+
+### 🔍 Debugging y Logs
+
+**Logs de debug:**
+Los scripts generan logs detallados que se envían a `stderr`:
+```bash
+python scripts/terminate_vpn_session.py debug 2> debug.log
+```
+
+**Archivos de salida:**
+- `vpn_list_output.txt`: Salida completa del comando `execute vpn sslvpn list`
+- `vpn_terminate_index_X_output.txt`: Salida de terminación de sesión específica
+
+**Verificación de conectividad:**
+```bash
+# Test básico de conexión SSH
+ssh admin@192.168.1.100 -p 22
+
+# Test desde la aplicación
+python scripts/terminate_vpn_session.py debug
+```
+
+### ⚠️ Consideraciones de Seguridad
+
+**Credenciales:**
+- Las credenciales SSH se almacenan en variables de entorno
+- Nunca hardcodear credenciales en los scripts
+- Usar cuentas SSH dedicadas con permisos mínimos necesarios
+
+**Timeouts y reconexión:**
+- Los scripts implementan timeouts para evitar conexiones colgadas
+- Manejo de errores de conexión y reconexión automática
+- Logs detallados para troubleshooting
+
+**Validación de entrada:**
+- Validación de parámetros antes de ejecutar comandos
+- Sanitización de nombres de usuario y grupos
+- Manejo seguro de caracteres especiales
 
 ## 🎯 Casos de Uso Principales
 
