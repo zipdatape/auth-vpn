@@ -1,0 +1,257 @@
+#!/bin/bash
+
+# Colores para una mejor salida
+VERDE='\033[0;32m'
+AMARILLO='\033[1;33m'
+AZUL='\033[0;34m'
+ROJO='\033[0;31m'
+NC='\033[0m' # Sin Color
+
+# Función para mostrar el estado
+show_status() {
+    local message=$1
+    local status=$2
+    printf "%-60s ${VERDE}[%s]${NC}\n" "$message" "$status"
+}
+
+clear
+echo -e "${AZUL}=== Script de Configuración de Azure VPN y Radius ===${NC}\n"
+
+# Verificar si el script se está ejecutando como root
+if [ "$EUID" -ne 0 ]; then
+    show_status "Verificando permisos de root" "ERROR"
+    echo -e "${ROJO}Este script debe ejecutarse como root o con sudo${NC}"
+    exit 1
+fi
+show_status "Verificando permisos de root" "OK"
+
+# Verificar si Docker está instalado
+if ! command -v docker &> /dev/null; then
+    show_status "Verificando instalación de Docker" "INSTALANDO"
+    curl -fsSL https://get.docker.com -o get-docker.sh -s
+    sh get-docker.sh > /dev/null 2>&1
+    rm get-docker.sh
+    show_status "Instalando Docker" "OK"
+else
+    show_status "Verificando instalación de Docker"   "OK"
+fi
+
+# Verificar si Docker Compose está instalado
+if ! command -v docker-compose &> /dev/null; then
+    show_status "Verificando Docker Compose" "INSTALANDO"
+    curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose > /dev/null 2>&1
+    chmod +x /usr/local/bin/docker-compose
+    show_status "Instalando Docker Compose" "OK"
+else
+    show_status "Verificando Docker Compose" "OK"
+fi
+
+# Verificar si la carpeta docker existe, si no, crearla
+if [ ! -d "docker" ]; then
+    show_status "Verificando carpeta docker" "CREANDO"
+    mkdir -p docker
+else
+    show_status "Verificando carpeta docker" "OK"
+fi
+
+# Cambiar al directorio docker
+cd docker
+
+# Crear la red de Docker manualmente
+if ! docker network inspect app-network >/dev/null 2>&1; then
+    show_status "Creando red Docker app-network" "CREANDO"
+    docker network create app-network > /dev/null 2>&1
+    show_status "Red app-network creada" "OK"
+else
+    show_status "Verificando red Docker app-network" "OK"
+fi
+
+# Crear carpeta MySQL
+show_status "Creando estructura de carpetas" "OK"
+mkdir -p mysql
+
+# Crear docker-compose.yml para MySQL
+show_status "Configurando MySQL" "OK"
+cat > mysql/docker-compose.yml << EOF
+version: '3.8'
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: radius-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: Rn.N9f7jvZ
+      MYSQL_DATABASE: radius_user
+      MYSQL_USER: radiususer
+      MYSQL_PASSWORD: Rn.xN9f7jvZ
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    command: --default-authentication-plugin=mysql_native_password
+    restart: always
+    networks:
+      - app-network
+networks:
+  app-network:
+    external: true
+volumes:
+  mysql_data:
+EOF
+
+# Iniciar contenedor MySQL
+show_status "Iniciando contenedor MySQL" "INICIANDO"
+cd mysql && docker-compose up -d > /dev/null 2>&1
+show_status "Contenedor MySQL iniciado" "OK"
+cd ..
+
+# Clonar el primer repositorio (azure-vpn)
+if [ ! -d "azure-vpn" ]; then
+    show_status "Clonando repositorio azure-vpn" "CLONANDO"
+    git clone https://github.com/De0xyS3/azure-vpn.git > /dev/null 2>&1
+    show_status "Repositorio azure-vpn clonado" "OK"
+else
+    show_status "Verificando repositorio azure-vpn" "OK"
+fi
+
+# Configurar azure-vpn
+show_status "Configurando azure-vpn" "OK"
+cat > azure-vpn/docker-compose.yml << EOF
+version: '3.8'
+services:
+  app_azure:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    image: auth-vpn
+    container_name: app_azure
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./server.key:/app/certs/server.key:ro
+      - ./server.crt:/app/certs/server.crt:ro
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - SSL_KEY_PATH=/app/certs/server.key
+      - SSL_CERT_PATH=/app/certs/server.crt
+      - DB_HOST=radius-mysql
+    env_file:
+      - .env.local
+    restart: unless-stopped
+    networks:
+      - app-network
+    user: root
+networks:
+  app-network:
+    external: true
+EOF
+
+# Configurar variables de entorno para azure-vpn
+show_status "Configurando variables de entorno azure-vpn" "OK"
+cat > azure-vpn/.env.local << EOF
+# Configuración de Azure AD
+AZURE_CLIENT_ID=<random_client_id>
+AZURE_CLIENT_SECRET=<random_client_secret>
+AZURE_TENANT_ID=<random_tenant_id>
+
+# Configuración de la API de FortiGate
+FORTIGATE_API_TOKEN=<random_api_token>
+FORTIGATE_API_URL=https://10.172.0.1:9443/api/v2
+
+# Detalles de conexión SSH de FortiGate
+FORTIGATE_IP=10.172.0.1
+FORTIGATE_SSH_PORT=1337
+FORTIGATE_SSH_USERNAME=<random_username>
+FORTIGATE_SSH_PASSWORD=<random_password>
+
+# Conexión a la Base de Datos
+DB_HOST=radius-mysql
+DB_NAME=radius_user
+DB_USER=radiususer
+DB_PASSWORD=Rn.xN9f7jvZ
+
+# Configuración SSL
+SSL_KEY_PATH=/app/certs/server.key
+SSL_CERT_PATH=/app/certs/server.crt
+
+# Configuración del Servidor
+PORT=3000
+
+# Secreto JWT para Autenticación
+JWT_SECRET=<random_jwt_secret>
+
+# Entorno de Node
+NODE_ENV=production
+EOF
+
+# Iniciar contenedor azure-vpn
+show_status "Iniciando contenedor azure-vpn" "INICIANDO"
+cd azure-vpn && docker-compose up -d > /dev/null 2>&1
+show_status "Contenedor azure-vpn iniciado" "OK"
+cd ..
+
+# Solicitar nombre para el contenedor radius
+echo -e "\n${AZUL}Por favor, ingrese un nombre para el contenedor radius:${NC}"
+read RADIUS_CONTAINER_NAME
+
+# Clonar el repositorio azure_radius
+if [ ! -d "$RADIUS_CONTAINER_NAME" ]; then
+    show_status "Clonando repositorio azure_radius" "CLONANDO"
+    git clone https://github.com/De0xyS3/azure_radius.git "$RADIUS_CONTAINER_NAME" > /dev/null 2>&1
+    show_status "Repositorio azure_radius clonado" "OK"
+else
+    show_status "Verificando repositorio azure_radius" "OK"
+fi
+
+# Configurar variables de entorno para azure_radius
+show_status "Configurando variables de entorno azure_radius" "OK"
+cat > "$RADIUS_CONTAINER_NAME/.env" << EOF
+AZURE_TENANT_ID=<your_tenant_id>
+AZURE_CLIENT_ID=<your_client_id>
+AZURE_CLIENT_SECRET=<your_client_secret>
+RADIUS_SECRET=<your_radius_secret>
+PORT=1812
+API_PORT=3001
+DB_HOST=radius-mysql
+DB_PORT=3306
+DB_NAME=radius_user
+DB_USER=radiususer
+DB_PASSWORD=Rn.xN9f7jvZ
+DEFAULT_DOMAIN=<default_domain>
+RADIUS_SERVER_ID=<radius_server_id>
+DEBUG=*
+EOF
+
+# Configurar docker-compose.yml para azure_radius
+show_status "Configurando docker-compose.yml para azure_radius" "OK"
+cat > "$RADIUS_CONTAINER_NAME/docker-compose.yml" << EOF
+version: '3'
+services:
+  radius:
+    build: .
+    container_name: ${RADIUS_CONTAINER_NAME}
+    env_file:
+      - .env
+    ports:
+      - "1812:1812/udp"
+    environment:
+      - AZURE_TENANT_ID=\${AZURE_TENANT_ID}
+      - AZURE_CLIENT_ID=\${AZURE_CLIENT_ID}
+      - AZURE_CLIENT_SECRET=\${AZURE_CLIENT_SECRET}
+      - RADIUS_SECRET=\${RADIUS_SECRET}
+      - PORT=\${PORT}
+      - DEBUG=*
+    networks:
+      - app-network
+networks:
+  app-network:
+    external: true
+EOF
+
+# Iniciar contenedor radius
+show_status "Iniciando contenedor radius" "INICIANDO"
+cd "$RADIUS_CONTAINER_NAME" && docker-compose up -d > /dev/null 2>&1
+show_status "Contenedor radius iniciado" "OK"
+
+echo -e "\n${VERDE}Configuración completada exitosamente!${NC}"
+echo -e "${AMARILLO}Nota: Es posible que necesite actualizar manualmente algunos valores en los archivos .env${NC}"
